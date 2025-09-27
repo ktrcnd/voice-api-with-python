@@ -1,4 +1,4 @@
-# Voice Lead API
+# VapiVoice Lead API
 This project is a Voice-to-Lead Capture API built with FastAPI. It provides backend services that integrate with conversational AI or voice assistants to automatically capture, validate, and enrich lead information in real time.
 
 The API ensures data quality through strict validation rules, enriches records with external information, and stores everything in a structured database. It’s lightweight, zero-cost to run locally, and easy to deploy in production environments.
