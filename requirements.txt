@@ -1,0 +1,12 @@
+fastapi
+pyngrok
+uvicorn[standard]
+pydantic
+httpx
+tenacity
+sqlalchemy
+python-dotenv
+pytest
+respx
+phonenumbers
+python-json-logger
