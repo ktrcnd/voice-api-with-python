@@ -4,3 +4,4 @@ __pycache__/
 .venv/
 leads.db
 setup.txt
+git_bash_guide.txt
