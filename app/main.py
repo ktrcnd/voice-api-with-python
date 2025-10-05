@@ -1,32 +1,44 @@
 import time
 import logging
-
 from logging import StreamHandler
+from fastapi.middleware.cors import CORSMiddleware
 from pythonjsonlogger import jsonlogger
 
-from fastapi import Request
+from fastapi import Request, FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
-from fastapi import FastAPI, HTTPException, Depends
 
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal, engine
 from .models import Base, Lead
-from .schemas import LeadCreate, LeadOut
+from .schemas import LeadCreate, LeadOut, LeadWrapper
 from .services import enrichment, utils
 
+# Create tables
 Base.metadata.create_all(bind=engine)
 
+# Logging setup
 logger = logging.getLogger("app")
 logger.setLevel(logging.INFO)
 handler = StreamHandler()
-formatter = jsonlogger.JsonFormatter('%(acstime)s %(levelname)s %(name)s %(message)s')
+formatter = jsonlogger.JsonFormatter('%(asctime)s %(levelname)s %(name)s %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
+# FastAPI app
 app = FastAPI(title="Vapi Voice + Python API (WiseWork Tech Test)")
 
+# CORS middleware (allow all origins for testing)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Dependency to get DB session
 def get_db():
     db = SessionLocal()
     try:
@@ -34,6 +46,7 @@ def get_db():
     finally:
         db.close()
 
+# Middleware for logging requests
 @app.middleware("http")
 async def add_logging(request: Request, call_next):
     start = time.time()
@@ -45,64 +58,52 @@ async def add_logging(request: Request, call_next):
         raise
     finally:
         latency = round((time.time() - start) * 1000, 2)
-        logger.info("route=%s method=%s path=%s status=%s latency=%s",
-                    request.method, request.method, request.url.path, status_code, latency)
-        
+        logger.info(
+            "route=%s method=%s path=%s status=%s latency=%s",
+            request.url.path,
+            request.method,
+            request.url.path,
+            status_code,
+            latency,
+        )
     return response
 
+# Health check
 @app.get("/health")
 def health():
     return {"ok": True}
 
 @app.post("/v1/leads")
-def create_lead(payload: LeadCreate, requests: Request):
-    #validate and create Lead
+def create_lead(payload: LeadWrapper, db: Session = Depends(get_db)):
     try:
-        pass
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
-    db: Session = next(get_db())
-
-    # Normalize Phone
-    normalized = utils.normalized_phone(payload.phone)
-
-    lead = Lead(
-        name = payload.name,
-        phone = payload.phone,
-        normalized_phone = normalized,
-        preferred_start = payload.preferred_start,
-        preferred_end = payload.preferred_end,
-        reason = payload.reason
-    )
-    db.add(lead)
-    db.commit()
-    db.refresh(lead)
-
-    #Enrichment --> attempts; failures Logged but do not fail request
-    try:
-        fx = enrichment.fetch_fx_usd_eur()
-        if fx is not None:
-            lead.fx_usd_eur = fx
-    except Exception as e:
-        logger.error("fx enrichment failed: %s", str(e))
-    
-    try:
-        fact = enrichment.fetch_fun_fact_short(80)
-        if fact:
-            lead.fun_fact_short = fact
-    except Exception as e:
-        logger.error("funfact enrichment failed: %s", str(e))
-
-    try:
+        lead_data = payload.getUserData
+        normalized = utils.normalized_phone(lead_data.phone)
+        
+        lead = Lead(
+            name=lead_data.name,
+            phone=lead_data.phone,
+            normalized_phone=normalized,
+            preferred_start=lead_data.preferred_start,
+            preferred_end=lead_data.preferred_end,
+            reason=lead_data.reason
+        )
         db.add(lead)
         db.commit()
+        db.refresh(lead)
+        
+        return {"status": "ok", "id": lead.id}
     except Exception as e:
-        logger.error("db update failed: %s", str(e))
+        logger.exception("Error creating lead")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    logger.info("lead_created id=%s name=%s call_id=%s", lead.id, lead.name, payload.call_id)
-    return JSONResponse(status_code=200, content = jsonable_encoder({"status": "ok", "id": lead.id}))
+#TEST RESPONSE
+# @app.post("/v1/leads")
+# async def create_lead(request: Request, db: Session = Depends(get_db)):
+#     data = await request.json()
+#     logger.info("Raw payload: %s", data)
+#     return {"received": data}
 
+# List all leads
 @app.get("/v1/leads", response_model=list[LeadOut])
 def list_leads(db: Session = Depends(get_db)):
     leads = db.query(Lead).order_by(Lead.id.desc()).all()
